@@ -14,11 +14,12 @@ import dataclasses
 from dataclasses import dataclass
 from tqdm import tqdm
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from skimage.transform import rescale, resize, downscale_local_mean
 import skimage.io
 from functools import partial
 
 
-torch.backends.cudnn.benchmark = False #True
+torch.backends.cudnn.benchmark = True
 
 ssim_fn = partial(structural_similarity, data_range=1,
                   gaussian_weights=True, sigma=1.5,
@@ -69,24 +70,26 @@ class Options:
         self.img_size = 512
 
 
-def load_dataset(opt, res, scale):
+def load_dataset(opt, res, scale,compute_metrics):
     dataset = dataio.NerfBlenderDataset(opt.dataset_path,
                                         splits=['test'],
                                         mode='test',
                                         resize_to=(int(res/2**(3-scale)), int(res/2**(3-scale))),
                                         multiscale=opt.multiscale,
                                         override_scale=scale,
-                                        testskip=1)
+                                        testskip=1,
+                                        no_reference_images=compute_metrics)
 
     coords_dataset = dataio.Implicit6DMultiviewDataWrapper(dataset,
                                                            (int(res/2**(3-scale)), int(res/2**(3-scale))),
                                                            dataset.get_camera_params(),
-                                                           samples_per_ray=256,  # opt.samples_per_ray,
+                                                           samples_per_ray=opt.samples_per_ray,
                                                            samples_per_view=opt.samples_per_view,
                                                            num_workers=opt.num_workers,
                                                            multiscale=opt.use_resized,
                                                            supervise_hr=opt.supervise_hr,
-                                                           scales=[1/8, 1/4, 1/2, 1])
+                                                           scales=[1/8, 1/4, 1/2, 1],
+                                                           no_ref_imgs = compute_metrics)
     coords_dataset.toggle_logging_sampling()
 
     return coords_dataset
@@ -194,14 +197,15 @@ def render_all_in_chunks(in_dict, model, scale, chunk_size):
 
 def render_image(opt, models, dataset, chunk_size,
                  in_dict, meta_dict, gt_dict, scale,
-                 return_all=False):
+                 return_all=False,not_compute_metrics=False):
 
     # add batch dimension
     for k, v in in_dict.items():
         in_dict[k].unsqueeze_(0)
 
-    for i in range(len(gt_dict['pixel_samples'])):
-        gt_dict['pixel_samples'][i].unsqueeze_(0)
+    if not_compute_metrics==False:
+        for i in range(len(gt_dict['pixel_samples'])):
+            gt_dict['pixel_samples'][i].unsqueeze_(0)
 
     use_chunks = True
     if in_dict['ray_samples'].shape[1] < chunk_size:
@@ -241,12 +245,12 @@ def render_image(opt, models, dataset, chunk_size,
             sigma = [s[..., -1:] for s in out_dict['combined']['model_out']['output']]
             rgb = [c[..., :-1] for c in out_dict['combined']['model_out']['output']]
             t_interval = in_dict['t_intervals']
-
-            if isinstance(gt_dict['pixel_samples'], list):
-                gt_view = gt_dict['pixel_samples'][scale].squeeze(0).numpy()
-            else:
-                gt_view = gt_dict['pixel_samples'].detach().squeeze(0).numpy()
-            view_shape = gt_view.shape
+            if not_compute_metrics==False:
+                if isinstance(gt_dict['pixel_samples'], list):
+                    gt_view = gt_dict['pixel_samples'][scale].squeeze(0).numpy()
+                else:
+                    gt_view = gt_dict['pixel_samples'].detach().squeeze(0).numpy()
+                view_shape = gt_view.shape
 
             pred_weights = [forward_models.compute_transmittance_weights(s, t_interval) for s in sigma]
             pred_pixels = [forward_models.compute_tomo_radiance(w, c) for w, c in zip(pred_weights, rgb)]
@@ -264,12 +268,12 @@ def render_image(opt, models, dataset, chunk_size,
             sigma = out_dict['combined']['model_out']['output'][-1][..., -1:]
             rgb = out_dict['combined']['model_out']['output'][-1][..., :-1]
             t_interval = in_dict['t_intervals']
-
-            if isinstance(gt_dict['pixel_samples'], list):
-                gt_view = gt_dict['pixel_samples'][scale].squeeze(0).numpy()
-            else:
-                gt_view = gt_dict['pixel_samples'].detach().squeeze(0).numpy()
-            view_shape = gt_view.shape
+            if not_compute_metrics==False:
+                if isinstance(gt_dict['pixel_samples'], list):
+                    gt_view = gt_dict['pixel_samples'][scale].squeeze(0).numpy()
+                else:
+                    gt_view = gt_dict['pixel_samples'].detach().squeeze(0).numpy()
+                view_shape = gt_view.shape
 
             pred_weights = forward_models.compute_transmittance_weights(sigma, t_interval)
             pred_pixels = forward_models.compute_tomo_radiance(pred_weights, rgb)
@@ -281,14 +285,16 @@ def render_image(opt, models, dataset, chunk_size,
 
         pred_view = pred_pixels.view(view_shape).detach().cpu()
         pred_view = torch.clamp(pred_view, 0, 1).numpy()
-
-    psnr = peak_signal_noise_ratio(gt_view, pred_view)
-    ssim = ssim_fn(gt_view, pred_view)
+    psnr = 0
+    ssim = 0
+    if not_compute_metrics == False:
+        psnr = peak_signal_noise_ratio(gt_view, pred_view)
+        ssim = ssim_fn(gt_view, pred_view)
 
     return pred_view, psnr, ssim, elapsed
 
 
-def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10000, return_all=False, val_idx=None):
+def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=1024, return_all=False, val_idx=None,not_compute_metrics=False):
 
     os.makedirs(f'./outputs/nerf/{outdir}', exist_ok=True)
 
@@ -297,7 +303,8 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
         opt = p.parse(f)
 
     opt = Options(**opt)
-    dataset = load_dataset(opt, res, scale)
+    dataset = load_dataset(opt, res, 3,not_compute_metrics)
+    # dataset = load_dataset(opt, res, scale,not_compute_metrics)
     models = load_model(opt, checkpoint)
 
     for k in models.keys():
@@ -326,6 +333,7 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
                 skimage.io.imsave(f'./outputs/nerf/{outdir}/r_{idx}_d{3-s}.png', (images[s]*255).astype(np.uint8))
         else:
             np.save(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.npy', {'psnr': psnr, 'ssim': ssim})
+            images = resize(images, (images.shape[0] * 4, images.shape[1] * 4),anti_aliasing=True)
             skimage.io.imsave(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.png', (images*255).astype(np.uint8))
 
             psnrs.append(psnr)
@@ -341,7 +349,6 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
 
         print(f'Avg. PSNR: {np.mean(psnrs):.02f}, Avg. SSIM: {np.mean(ssims):.02f}')
 
-
 if __name__ == '__main__':
     # before running this you need to download the nerf blender datasets for the lego model
     # and place in ../data/nerf_synthetic/lego
@@ -352,14 +359,14 @@ if __name__ == '__main__':
     config = './config/nerf/bacon.ini'
     checkpoint = '../trained_models/lego.pth'
     outdir = 'lego'
-    res = 512
+    res = 256
     for scale in range(4):
-        eval_nerf_bacon('lego', config, checkpoint, outdir, res, scale)
-
+        eval_nerf_bacon('lego', config, checkpoint, outdir, res, scale, not_compute_metrics=True)
+        
     # render the semisupervised model
-    config = './config/nerf/bacon_semisupervise.ini'
-    checkpoint = '../trained_models/lego_semisupervise.pth'
-    outdir = 'lego_semisupervise'
-    res = 512
-    for scale in range(4):
-        eval_nerf_bacon('lego_semisupervise', config, checkpoint, outdir, res, scale)
+    # config = './config/nerf/bacon_semisupervise.ini'
+    # checkpoint = '../trained_models/lego_semisupervise.pth'
+    # outdir = 'lego_semisupervise'
+    # res = 512
+    # for scale in range(4):
+    #     eval_nerf_bacon('lego_semisupervise', config, checkpoint, outdir, res, scale)

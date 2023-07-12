@@ -275,7 +275,8 @@ class NerfBlenderDataset(torch.utils.data.Dataset):
                  d_rot=0, bounds=((-2, 2), (-2, 2), (0, 2)),
                  multiscale=False,
                  black_background=False,
-                 override_scale=None):
+                 override_scale=None,
+                 no_reference_images=False):
 
         self.mode = mode
         self.basedir = basedir
@@ -285,6 +286,7 @@ class NerfBlenderDataset(torch.utils.data.Dataset):
         self.multiscale = multiscale
         self.select_idx = select_idx
         self.d_rot = d_rot
+        self.no_ref_imgs = no_reference_images
 
         metas = {}
         for s in splits:
@@ -316,29 +318,49 @@ class NerfBlenderDataset(torch.utils.data.Dataset):
         self.transforms = Compose(transform_list)
 
         # Gather images and poses
-        self.all_imgs = {}
-        self.all_poses = {}
-        for s in splits:
-            meta = metas[s]
-            imgs, poses = self.load_images(s, meta, testskip)
+        if (no_reference_images==False):
+            self.all_imgs = {}
+            self.all_poses = {}
+            for s in splits:
+                meta = metas[s]
+                imgs, poses = self.load_images(s, meta, testskip)
 
-            self.all_imgs.update({s: imgs})
-            self.all_poses.update({s: poses})
+                self.all_imgs.update({s: imgs})
+                self.all_poses.update({s: poses})
 
-        if self.final_render:
-            self.poses = [torch.from_numpy(self.pose_spherical(angle, -30.0, 4.0)).float()
-                          for angle in np.linspace(-180, 180, 40 + 1)[:-1]]
+            if self.final_render:
+                self.poses = [torch.from_numpy(self.pose_spherical(angle, -30.0, 4.0)).float()
+                            for angle in np.linspace(-180, 180, 40 + 1)[:-1]]
 
-        if override_scale is not None:
-            assert multiscale, 'only for multiscale'
-            if override_scale > 3:
-                override_scale = 3
-            H, W = self.multiscale_imgs[0][override_scale].shape[:2]
-            self.img_shape = self.multiscale_imgs[0][override_scale].shape
+            if override_scale is not None:
+                assert multiscale, 'only for multiscale'
+                if override_scale > 3:
+                    override_scale = 3
+                H, W = self.multiscale_imgs[0][override_scale].shape[:2]
+                self.img_shape = self.multiscale_imgs[0][override_scale].shape
+            else:
+                H, W = imgs[0].shape[:2]
+                self.img_shape = imgs[0].shape
         else:
-            H, W = imgs[0].shape[:2]
-            self.img_shape = imgs[0].shape
+            self.all_poses = {}
+            for s in splits:
+                meta = metas[s]
+                imgs, poses = self.load_images(s, meta, testskip)
+                self.all_poses.update({s: poses})
 
+            if self.final_render:
+                self.poses = [torch.from_numpy(self.pose_spherical(angle, -30.0, 4.0)).float()
+                            for angle in np.linspace(-180, 180, 40 + 1)[:-1]]
+            if override_scale is not None:
+                assert multiscale, 'only for multiscale'
+                if override_scale > 3:
+                    override_scale = 3
+                H, W = self.multiscale_imgs[0][override_scale].shape[:2]
+                self.img_shape = self.multiscale_imgs[0][override_scale].shape
+            else:
+                H, W = imgs[0].shape[:2]
+                self.img_shape = imgs[0].shape
+            del imgs
         # projective camera
         camera_angle_x = float(meta['camera_angle_x'])
         focal = .5 * W / np.tan(.5 * camera_angle_x)
@@ -384,7 +406,7 @@ class NerfBlenderDataset(torch.utils.data.Dataset):
             self.multiscale_imgs = [imgs[i:i+4][::-1] for i in range(0, len(imgs), 4)]
             imgs = imgs[::4]
 
-        return imgs, poses
+        return imgs[:3], poses[:3]
 
     # adapted from https://github.com/krrish94/nerf-pytorch
     # derived from original NeRF repo (MIT License)
@@ -436,8 +458,11 @@ class NerfBlenderDataset(torch.utils.data.Dataset):
                     'pose': self.poses[item]}
 
         # otherwise, return GT images and pose
-        else:
+        elif self.no_ref_imgs == False:
             return {'img': self.all_imgs[self.mode][item],
+                    'pose': self.all_poses[self.mode][item]}
+        else: 
+            return {'img': torch.zeros(4),
                     'pose': self.all_poses[self.mode][item]}
 
 
@@ -448,13 +473,15 @@ class Implicit6DMultiviewDataWrapper(torch.utils.data.Dataset):
                  num_workers=4,
                  multiscale=False,
                  supervise_hr=False,
-                 scales=[1/8, 1/4, 1/2, 1]):
+                 scales=[1/8, 1/4, 1/2, 1],
+                 no_ref_imgs = False):
 
         self.dataset = dataset
         self.num_workers = num_workers
         self.multiscale = multiscale
         self.scales = scales
         self.supervise_hr = supervise_hr
+        self.no_ref_imgs = no_ref_imgs
 
         self.img_shape = img_shape
         self.camera_params = camera_params
@@ -476,7 +503,6 @@ class Implicit6DMultiviewDataWrapper(torch.utils.data.Dataset):
 
         if multiscale:
             self.multiscale_imgs = dataset.multiscale_imgs
-
             # switch to size [num_scales, num_views, img_size[0], img_size[1], 3]
             self.multiscale_imgs = torch.stack([torch.stack(m, dim=0)
                                                 for m in zip(*self.multiscale_imgs)], dim=0)
@@ -518,19 +544,29 @@ class Implicit6DMultiviewDataWrapper(torch.utils.data.Dataset):
 
         print('Precomputing rays...')
         for img_pose in tqdm(self.dataset):
-            img = img_pose['img']
-            img_list.append(img)
+            if self.no_ref_imgs == False:
+                img = img_pose['img']
+                img_list.append(img)
 
-            pose = img_pose['pose']
-            pose_list.append(pose)
+                pose = img_pose['pose']
+                pose_list.append(pose)
 
-            ray_dirs = pose[:3, :3].matmul(self.norm_rays).permute(1, 0)
-            ray_dirs_list.append(ray_dirs)
+                ray_dirs = pose[:3, :3].matmul(self.norm_rays).permute(1, 0)
+                ray_dirs_list.append(ray_dirs)
 
-            ray_orgs = pose[:3, 3].repeat((self.num_rays_per_view, 1))
-            ray_orgs_list.append(ray_orgs)
+                ray_orgs = pose[:3, 3].repeat((self.num_rays_per_view, 1))
+                ray_orgs_list.append(ray_orgs)
+            else:
+                pose = img_pose['pose']
+                pose_list.append(pose)
 
-        self.all_imgs = torch.stack(img_list, dim=0)
+                ray_dirs = pose[:3, :3].matmul(self.norm_rays).permute(1, 0)
+                ray_dirs_list.append(ray_dirs)
+
+                ray_orgs = pose[:3, 3].repeat((self.num_rays_per_view, 1))
+                ray_orgs_list.append(ray_orgs)
+
+        if self.no_ref_imgs == False: self.all_imgs = torch.stack(img_list, dim=0)
         self.all_poses = torch.stack(pose_list, dim=0)
         self.all_ray_orgs = torch.stack(ray_orgs_list, dim=0)
         self.all_ray_dirs = torch.stack(ray_dirs_list, dim=0)
@@ -538,16 +574,17 @@ class Implicit6DMultiviewDataWrapper(torch.utils.data.Dataset):
         self.hit = torch.zeros(self.all_ray_dirs.view(-1, 3).shape[0])
 
     def __len__(self):
-        if self.is_logging:
+        if self.is_logging and self.no_ref_imgs == False:
             return self.all_imgs.shape[0]
         else:
             return self.num_rays // self.samples_per_view
 
     def get_val_rays(self):
-        img = self.all_imgs[self.val_idx, ...]
+        if self.no_ref_imgs == False: img = self.all_imgs[self.val_idx, ...]
         ray_dirs = self.all_ray_dirs[self.val_idx, ...]
         ray_orgs = self.all_ray_orgs[self.val_idx, ...]
-        view_samples = img
+        view_samples  = 0
+        if self.no_ref_imgs == False:  view_samples = img
 
         if self.multiscale:
             img = self.multiscale_imgs[:, self.val_idx, ...]
@@ -556,7 +593,7 @@ class Implicit6DMultiviewDataWrapper(torch.utils.data.Dataset):
             view_samples = [im for im in img]
 
         self.val_idx += 1
-        self.val_idx %= self.all_imgs.shape[0]
+        if self.no_ref_imgs == False: self.val_idx %= self.all_imgs.shape[0]
 
         return view_samples, ray_orgs, ray_dirs
 
@@ -578,8 +615,7 @@ class Implicit6DMultiviewDataWrapper(torch.utils.data.Dataset):
 
         return view_samples, ray_orgs, ray_dirs
 
-    def __getitem__(self, idx):
-
+    def __getitem__(self, idx):            
         if self.is_logging:
             view_samples, ray_orgs, ray_dirs = self.get_val_rays()
         else:
