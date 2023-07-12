@@ -18,6 +18,7 @@ from skimage.transform import rescale, resize, downscale_local_mean
 import skimage.io
 from functools import partial
 
+SCALE_FACTOR = 2
 
 torch.backends.cudnn.benchmark = True
 
@@ -294,8 +295,7 @@ def render_image(opt, models, dataset, chunk_size,
     return pred_view, psnr, ssim, elapsed
 
 
-def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=1024, return_all=False, val_idx=None,not_compute_metrics=False):
-
+def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, target=None, chunk_size=1024, return_all=False, val_idx=None,not_compute_metrics=False):
     os.makedirs(f'./outputs/nerf/{outdir}', exist_ok=True)
 
     p = configargparse.DefaultConfigFileParser()
@@ -314,6 +314,7 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
     psnrs = []
     ssims = []
     dataset_generator = iter(dataset)
+    images = None
     for idx in range(len(dataset)):
 
         if val_idx is not None:
@@ -321,6 +322,9 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
             idx = val_idx
 
         in_dict, meta_dict, gt_dict = next(dataset_generator)
+
+        if target is not None and idx != target:
+            continue
 
         images, psnr, ssim, elapsed = render_image(opt, models, dataset, chunk_size,
                                                    in_dict, meta_dict, gt_dict,
@@ -332,8 +336,8 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
             for s in range(4):
                 skimage.io.imsave(f'./outputs/nerf/{outdir}/r_{idx}_d{3-s}.png', (images[s]*255).astype(np.uint8))
         else:
-            np.save(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.npy', {'psnr': psnr, 'ssim': ssim})
-            images = resize(images, (images.shape[0] * 4, images.shape[1] * 4),anti_aliasing=True)
+            #np.save(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.npy', {'psnr': psnr, 'ssim': ssim})
+            images = resize(images, (int(images.shape[0] * SCALE_FACTOR), int(images.shape[1] * SCALE_FACTOR)), anti_aliasing=True)
             skimage.io.imsave(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.png', (images*255).astype(np.uint8))
 
             psnrs.append(psnr)
@@ -349,6 +353,45 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
 
         print(f'Avg. PSNR: {np.mean(psnrs):.02f}, Avg. SSIM: {np.mean(ssims):.02f}')
 
+    return images
+
+
+def create_circular_mask(h, w, radius=None):
+    center = (int(w/2), int(h/2))
+    if radius is None:      # use the smallest distance between the center and image walls
+        radius = min(center[0], center[1], w-center[0], h-center[1])
+
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
+
+    mask = dist_from_center <= radius
+    return mask
+
+
+def fovnerf_wrapper(scene, config, checkpoint, outdir, res):
+    idxs = [0, 1]
+    
+    # Create circular masks to separate the four views
+    dim = int(res * SCALE_FACTOR)
+    masks = []
+    for length in [4, 8, 16]:
+        masks.append(create_circular_mask(dim, dim, radius=dim/length))
+
+    for idx in idxs:
+        rendered_images = []
+        for scale in range(4):
+            rendered_images.append(eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, idx))
+        
+        for i in range(len(masks)):
+            mask = masks[i]
+            rendered_images[i][mask] = 0
+            rendered_images[i+1][~mask] = 0
+
+        fovnerf_image = np.sum(rendered_images, axis=0)
+        skimage.io.imsave(f'./outputs/nerf/foveated/r_{idx}.png', (fovnerf_image*255).astype(np.uint8))
+
+
+
 if __name__ == '__main__':
     # before running this you need to download the nerf blender datasets for the lego model
     # and place in ../data/nerf_synthetic/lego
@@ -360,9 +403,10 @@ if __name__ == '__main__':
     checkpoint = '../trained_models/lego.pth'
     outdir = 'lego'
     res = 256
-    for scale in range(4):
-        eval_nerf_bacon('lego', config, checkpoint, outdir, res, scale, not_compute_metrics=True)
-        
+    fovnerf_wrapper('lego', config, checkpoint, outdir, res)
+    #for scale in range(4):
+    #    eval_nerf_bacon('lego', config, checkpoint, outdir, res, scale, not_compute_metrics=True)
+
     # render the semisupervised model
     # config = './config/nerf/bacon_semisupervise.ini'
     # checkpoint = '../trained_models/lego_semisupervise.pth'
