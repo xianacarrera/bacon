@@ -298,94 +298,9 @@ def create_circular_mask(h, w, radius):
     dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
 
     mask = dist_from_center <= radius
+    print(mask.shape)
     return mask
 
-
-
-"""
-def eval_nerf_bacon_old(scene, config, checkpoint, outdir, res, chunk_size=10000, return_all=False, val_idx=None):
-
-    os.makedirs(f'./outputs/nerf/{outdir}', exist_ok=True)
-
-    p = configargparse.DefaultConfigFileParser()
-    with open(config) as f:
-        opt = p.parse(f)
-
-    opt = Options(**opt)
-
-    datasets = []
-    all_models = []
-    for scale in range(4):
-        datasets.append(load_dataset(opt, res, scale))
-        models = load_model(opt, checkpoint)
-
-        for k in models.keys():
-            models[k].stop_after = scale
-        all_models.append(models)
-
-    # render images
-    psnrs = []
-    ssims = []
-    dataset_generators = [iter(dataset) for dataset in datasets]
-    for idx in range(min([len(dataset) for dataset in datasets])):
-        images = []
-        for scale in range(4):
-
-            if val_idx is not None:
-                dataset.val_idx = val_idx
-                idx = val_idx
-
-            in_dict, meta_dict, gt_dict = next(dataset_generator)
-
-            image, psnr, ssim, elapsed = render_image(opt, models, dataset, chunk_size,
-                                                    in_dict, meta_dict, gt_dict,
-                                                    scale, return_all=return_all)
-            images.append(image)
-
-            tqdm.write(f'Scale: {scale} | PSNR: {psnr:.02f} dB, SSIM: {ssim:.02f}, Elapsed: {elapsed:.02f} ms')
-
-            if return_all:
-                for s in range(4):
-                    skimage.io.imsave(f'./outputs/nerf/{outdir}/r_{idx}_d{3-s}.png', (image[s]*255).astype(np.uint8))
-            else:
-                np.save(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.npy', {'psnr': psnr, 'ssim': ssim})
-                skimage.io.imsave(f'./outputs/nerf/{outdir}/r_{idx}_d{3-scale}.png', (image*255).astype(np.uint8))
-
-                psnrs.append(psnr)
-                ssims.append(ssim)
-
-            if val_idx is not None:
-                break
-
-        # Create masks of decreasing size
-        mask1 = create_circular_mask(res, res, res/4)
-        mask2 = create_circular_mask(res, res, res/8)
-        mask3 = create_circular_mask(res, res, res/16)
-
-        # Mask the images
-        images[0][mask1] = 0
-        images[1][~mask1] = 0
-        images[1][mask2] = 0
-        images[2][~mask2] = 0
-        images[2][mask3] = 0
-        images[3][~mask3] = 0
-
-        # Combine the images
-        result = np.zeros((res, res, 3))
-        result += images[0]
-        result += images[1]
-        result += images[2]
-        result += images[3]
-
-        skimage.io.imsave(f'./outputs/nerf/{outdir}/fov_r_{idx}.png', (result*255).astype(np.uint8))
-
-    if not return_all and val_idx is not None:
-        np.save(f'./outputs/nerf/{outdir}/metrics_d{3-scale}.npy', {'psnr': psnrs, 'ssim': ssims,
-                                                                    'avg_psnr': np.mean(psnrs),
-                                                                    'avg_ssim': np.mean(ssims)})
-
-        print(f'Avg. PSNR: {np.mean(psnrs):.02f}, Avg. SSIM: {np.mean(ssims):.02f}')
-"""
 
 
 def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10000, return_all=False, val_idx=None):
@@ -449,32 +364,35 @@ def eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, chunk_size=10
 
 def outer_eval(scene, config, checkpoint, outdir, res):
     img_collections = []
-    for scale in range(4):
+    for scale in range(2):
         img_collections.append(eval_nerf_bacon('lego', config, checkpoint, outdir, res, scale))
 
     nimages = min([len(col) for col in img_collections])
-    for i in range(nimages):
+    #for i in range(nimages):
+    for i in range(1):
         scaled_imgs = [col[i] for col in img_collections]
         
         # Create masks of decreasing size
-        mask1 = create_circular_mask(res, res, res/4)
-        mask2 = create_circular_mask(res, res, res/8)
-        mask3 = create_circular_mask(res, res, res/16)
+        dim0 = scaled_imgs[0].shape[0]
+        mask1 = create_circular_mask(dim0, dim0, dim0/4)
+        dim1 = scaled_imgs[1].shape[0]
+        mask2 = create_circular_mask(dim1, dim1, dim1/8)
+        #mask3 = create_circular_mask(dim, dim, dim/16)
 
         # Mask the images
         scaled_imgs[0][mask1] = 0
         scaled_imgs[1][~mask1] = 0
-        scaled_imgs[1][mask2] = 0
-        scaled_imgs[2][~mask2] = 0
-        scaled_imgs[2][mask3] = 0
-        scaled_imgs[3][~mask3] = 0
+        #scaled_imgs[1][mask2] = 0
+        #scaled_imgs[2][~mask2] = 0
+        #scaled_imgs[2][mask3] = 0
+        #scaled_imgs[3][~mask3] = 0
 
         # Combine the images
-        result = np.zeros((res, res, 3))
+        result = np.zeros((dim0, dim0, 3))
         result += scaled_imgs[0]
         result += scaled_imgs[1]
-        result += scaled_imgs[2]
-        result += scaled_imgs[3]
+        #result += scaled_imgs[2]
+        #result += scaled_imgs[3]
 
         skimage.io.imsave(f'./outputs/nerf/{outdir}/fov_r_{idx}.png', (result*255).astype(np.uint8))
 
@@ -487,7 +405,8 @@ if __name__ == '__main__':
     # https://drive.google.com/drive/folders/1lrDkQanWtTznf48FCaW5lX9ToRdNDF1a
 
     # render the model trained with explicit supervision at each scale
-    config = './config/nerf/bacon.ini'
+    #config = './config/nerf/bacon.ini'
+    config = './config/nerf/bacon_lr.ini'
     checkpoint = '../trained_models/lego.pth'
     outdir = 'lego'
     res = 512
