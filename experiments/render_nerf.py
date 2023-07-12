@@ -365,7 +365,12 @@ def create_circular_mask(h, w, radius=None):
     dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
 
     mask = dist_from_center <= radius
-    return mask
+    
+    epsilon = 0.02*w        # 5% of the width
+    inner_blending = dist_from_center >= radius - epsilon
+    outer_blending = dist_from_center <= radius + epsilon 
+
+    return inner_blending, outer_blending
 
 
 def fovnerf_wrapper(scene, config, checkpoint, outdir, res):
@@ -373,19 +378,27 @@ def fovnerf_wrapper(scene, config, checkpoint, outdir, res):
     
     # Create circular masks to separate the four views
     dim = int(res * SCALE_FACTOR)
-    masks = []
+    inner_blendings = []
+    outer_blendings = []
     for length in [4, 8, 16]:
-        masks.append(create_circular_mask(dim, dim, radius=dim/length))
+        inner_blending, outer_blending = create_circular_mask(dim, dim, radius=dim/length)
+        inner_blendings.append(inner_blending)
+        outer_blendings.append(outer_blending)
 
     for idx in idxs:
         rendered_images = []
         for scale in range(4):
             rendered_images.append(eval_nerf_bacon(scene, config, checkpoint, outdir, res, scale, idx))
         
-        for i in range(len(masks)):
-            mask = masks[i]
-            rendered_images[i][mask] = 0
-            rendered_images[i+1][~mask] = 0
+        for i in range(len(inner_blendings)):
+            inner_blending = inner_blendings[i]
+            outer_blending = outer_blendings[i]
+            blending = outer_blending & inner_blending
+
+            rendered_images[i][~inner_blending] = 0
+            rendered_images[i][blending] *= 0.5
+            rendered_images[i+1][blending] *= 0.5
+            rendered_images[i+1][~outer_blending] = 0
 
         fovnerf_image = np.sum(rendered_images, axis=0)
         skimage.io.imsave(f'./outputs/nerf/foveated/r_{idx}.png', (fovnerf_image*255).astype(np.uint8))
