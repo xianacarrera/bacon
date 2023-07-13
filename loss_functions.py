@@ -33,9 +33,10 @@ def multiscale_image_mse(model_output, gt, use_resized=False):
 
 def multiscale_radiance_loss(model_outputs, gt, use_resized=False, weight=1.0,
                              regularize_sigma=False, reg_lambda=1e-5, reg_c=0.5):
-    tomo_loss = None
-    sigma_reg = None
+    tomo_loss = None    # Accumulated loss across different scales
+    sigma_reg = None    # Accumulated regularization term across different scales
 
+    # Predicted sigmas and rgb values at each scale
     pred_sigmas = [pred[..., -1:] for pred in model_outputs['combined']['model_out']['output']]
     pred_rgbs = [pred[..., :-1] for pred in model_outputs['combined']['model_out']['output']]
     if isinstance(model_outputs['combined']['model_in']['t_intervals'], list):
@@ -60,7 +61,7 @@ def multiscale_radiance_loss(model_outputs, gt, use_resized=False, weight=1.0,
         else:
             target_pixel_samples = gt['pixel_samples']
 
-        # Loss
+        # Loss --> MSE
         if tomo_loss is None:
             tomo_loss = (pred_pixel_samples - target_pixel_samples)**2
         else:
@@ -83,6 +84,15 @@ def multiscale_radiance_loss(model_outputs, gt, use_resized=False, weight=1.0,
 
 def radiance_sigma_rgb_loss(model_outputs, gt, regularize_sigma=False,
                             reg_lambda=1e-5, reg_c=0.5):
+    """Loss function. Used in NeRF for non-multiscale training.
+        model_outputs: dict containing the output of the model, including the 
+                        predicted std dev, rgb values and t_intervals
+        gt: dict containing the ground truth values, including the pixel samples
+        regularize_sigma: bool, whether to regularize the predicted sigma
+        reg_lambda: float, regularization weight for sigma
+        reg_c: float, regularization constant for sigma
+    """
+
     pred_sigma = model_outputs['combined']['model_out']['output'][..., -1:]
     pred_rgb = model_outputs['combined']['model_out']['output'][..., :-1]
     t_intervals = model_outputs['combined']['model_in']['t_intervals']

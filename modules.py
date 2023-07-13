@@ -93,9 +93,13 @@ class Swish(nn.Module):
 
 
 def mfn_weights_init(m):
-    with torch.no_grad():
-        if hasattr(m, 'weight'):
-            num_input = m.weight.size(-1)
+    """ Weight initialization function.
+        Input: m -> nn.Module
+    """
+    with torch.no_grad():       # Gradients are not needed during initialization
+        if hasattr(m, 'weight'):     # If true, perform initialization
+            num_input = m.weight.size(-1)        # Number of input features
+            # Similar to Xavier initializatio
             m.weight.uniform_(-np.sqrt(6/num_input), np.sqrt(6/num_input))
 
 
@@ -105,6 +109,11 @@ class MFNBase(nn.Module):
                  bias=True, output_act=False):
         super().__init__()
 
+        # hidden_size = #features in the hidden layers
+        # bias = boolean indicating whether to use bias in the linear layers
+        # output_act = boolean indicating whether to use a sin activation on the output
+
+        # Create n_layers linear layers with the same number of input and output features (hidden_size)
         self.linear = nn.ModuleList(
             [nn.Linear(hidden_size, hidden_size, bias) for _ in range(n_layers)]
         )
@@ -130,6 +139,9 @@ class MFNBase(nn.Module):
         if self.output_act:
             out = torch.sin(out)
 
+        # model_in -> original input data
+        # model_out -> output of the model.
+        #      output -> output tensor
         return {'model_in': input_dict, 'model_out': {'output': out}}
 
 
@@ -199,7 +211,7 @@ class BACON(MFNBase):
 
         print(self)
 
-    def forward_mfn(self, input_dict):
+    def forward_mfn(self, input_dict):   # Forward pass based on the input data
         if 'coords' in input_dict:
             coords = input_dict['coords']
         elif 'ray_samples' in input_dict:
@@ -209,6 +221,7 @@ class BACON(MFNBase):
                 coords = input_dict['ray_samples']
 
         if self.reuse_filters:
+            # Apply the filters to the input
             filter_outputs = 3 * [self.filters[2](coords), ] + \
                              2 * [self.filters[4](coords), ] + \
                              2 * [self.filters[6](coords), ] + \
@@ -229,7 +242,7 @@ class BACON(MFNBase):
 
         return out
 
-    def forward(self, model_input, mode=None, integral_dim=None):
+    def forward(self, model_input, mode=None, integral_dim=None):    # Forward pass
 
         out = {'output': self.forward_mfn(model_input)}
 

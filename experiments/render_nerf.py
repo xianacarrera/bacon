@@ -363,14 +363,12 @@ def create_circular_mask(h, w, radius=None):
 
     Y, X = np.ogrid[:h, :w]
     dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
-
-    mask = dist_from_center <= radius
     
-    epsilon = 0.02*w        # 5% of the width
+    epsilon = 0.02*w        # 2% of the width
     inner_blending = dist_from_center >= radius - epsilon
     outer_blending = dist_from_center <= radius + epsilon 
 
-    return inner_blending, outer_blending
+    return inner_blending, outer_blending, dist_from_center
 
 
 def fovnerf_wrapper(scene, config, checkpoint, outdir, res):
@@ -380,10 +378,12 @@ def fovnerf_wrapper(scene, config, checkpoint, outdir, res):
     dim = int(res * SCALE_FACTOR)
     inner_blendings = []
     outer_blendings = []
+    dists_from_center = []
     for length in [4, 8, 16]:
-        inner_blending, outer_blending = create_circular_mask(dim, dim, radius=dim/length)
+        inner_blending, outer_blending, dist_from_center = create_circular_mask(dim, dim, radius=dim/length)
         inner_blendings.append(inner_blending)
         outer_blendings.append(outer_blending)
+        dists_from_center.append(dist_from_center)
 
     for idx in idxs:
         rendered_images = []
@@ -394,6 +394,12 @@ def fovnerf_wrapper(scene, config, checkpoint, outdir, res):
             inner_blending = inner_blendings[i]
             outer_blending = outer_blendings[i]
             blending = outer_blending & inner_blending
+            
+            dist_from_center = dists_from_center[i]
+            dists_from_center[~blending] = 0
+
+            blending_alpha = blending.astype(np.float32)
+            blending_alpha
 
             rendered_images[i][~inner_blending] = 0
             rendered_images[i][blending] *= 0.5
