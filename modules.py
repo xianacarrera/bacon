@@ -103,10 +103,30 @@ def mfn_weights_init(m):
             m.weight.uniform_(-np.sqrt(6/num_input), np.sqrt(6/num_input))
 
 
+def generate_layers(initial_size, increment, out_size, nlayers, bias=True):
+    nfeatures = initial_size
+    layers = [nn.Linear(initial_size, nfeatures, bias)]
+    output_layers = [nn.Linear(nfeatures, out_size)]
+    
+    count = 1
+    while count < min(nlayers, 7):
+        layers.append(nn.Linear(nfeatures, nfeatures + 32, bias))
+        nfeatures += increment
+        output_layers.append(nn.Linear(nfeatures, out_size))
+        print(nfeatures)
+        count += 1
+
+    if nlayers >= 7:
+        layers.append(nn.Linear(nfeatures, nfeatures, bias))
+        output_layers.append(nn.Linear(nfeatures, out_size))
+
+    return layers, output_layers
+
+
 class MFNBase(nn.Module):
 
     def __init__(self, hidden_size, out_size, n_layers, weight_scale,
-                 bias=True, output_act=False):
+                 bias=True, output_act=False, start_output_size=64, increment=32):
         super().__init__()
 
         # hidden_size = #features in the hidden layers
@@ -114,11 +134,14 @@ class MFNBase(nn.Module):
         # output_act = boolean indicating whether to use a sin activation on the output
 
         # Create n_layers linear layers with the same number of input and output features (hidden_size)
-        self.linear = nn.ModuleList(
-            [nn.Linear(hidden_size, hidden_size, bias) for _ in range(n_layers)]
-        )
+        layers, output_layers = generate_layers(start_output_size, increment, out_size, n_layers, bias)
+        # Layer progression
+        # Inputs: 256 -> 64 -> 96 -> 128 -> 160 -> 192 -> 224 -> 256
+        # Outputs: 64 -> 96 -> 128 -> 160 -> 192 -> 224 -> 256 -> 256
 
-        self.output_linear = nn.Linear(hidden_size, out_size)
+        self.linear = nn.ModuleList(layers)
+        # self.output_linear = nn.Linear(hidden_size, out_size)
+        self.output_linear = nn.ModuleList(output_layers)
 
         self.output_act = output_act
 
@@ -134,7 +157,9 @@ class MFNBase(nn.Module):
         out = self.filters[0](coords)
         for i in range(1, len(self.filters)):
             out = self.filters[i](coords) * self.linear[i - 1](out)
-        out = self.output_linear(out)
+        # TODO: I assume that the length of self.filters is what determines the number of layers to be used
+        # => It also determines which output layer to use
+        out = self.output_linear[len(self.filters) - 1](out)
 
         if self.output_act:
             out = torch.sin(out)
@@ -204,11 +229,18 @@ class BACON(MFNBase):
         input_scale = [round((np.pi * freq / (hidden_layers + 1))
                        / quantization_interval) * quantization_interval for freq in frequency]
 
+        """
         self.filters = nn.ModuleList([
                 FourierLayer(in_size, hidden_size, input_scale,
                              quantization_interval=quantization_interval)
                 for i in range(hidden_layers + 1)])
-
+        """
+        filters = [FourierLayer(in_size, hidden_size, input_scale, quantization_interval=quantization_interval)]
+        for _ in range(hidden_layers-1):
+            filters.append(FourierLayer(in_size, hidden_size+32, input_scale, quantization_interval=quantization_interval))
+            hidden_size += 32
+        filters.append(FourierLayer(in_size, min(hidden_size, 256), input_scale, quantization_interval=quantization_interval))
+        self.filters = nn.ModuleList(filters)
         print(self)
 
     def forward_mfn(self, input_dict):   # Forward pass based on the input data
@@ -235,7 +267,8 @@ class BACON(MFNBase):
             for i in range(1, len(self.filters)):
                 out = self.filters[i](coords) * self.linear[i - 1](out)
 
-        out = self.output_linear(out)
+        # out = self.output_linear[len(self.filters) - 1](out)
+        out = self.output_linear[len(self.filters) - 1](out)
 
         if self.output_act:
             out = torch.sin(out)
@@ -253,6 +286,16 @@ class BACON(MFNBase):
         return {'model_in': model_input, 'model_out': out}
 
 
+def get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval):
+    filters = [FourierLayer(in_size, start_output_size, input_scale[0], quantization_interval=quantization_interval)]
+    for i in range(1, hidden_layers):     # hidden_layers - 1 iterations
+        filters.append(FourierLayer(in_size, start_output_size, input_scale[i], quantization_interval=quantization_interval))
+        start_output_size += 32
+    filters.append(FourierLayer(in_size, min(start_output_size, 256), input_scale[hidden_layers], 
+                    quantization_interval=quantization_interval))
+    return filters
+
+
 class MultiscaleBACON(MFNBase):
     def __init__(self,
                  in_size,
@@ -268,7 +311,9 @@ class MultiscaleBACON(MFNBase):
                  is_sdf=False,
                  input_scales=None,
                  output_layers=None,
-                 reuse_filters=False):
+                 reuse_filters=False,
+                 start_output_size=64,
+                 increment=32):
 
         super().__init__(hidden_size, out_size, hidden_layers,
                          weight_scale, bias, output_act)
@@ -287,23 +332,31 @@ class MultiscaleBACON(MFNBase):
             input_scale = [round((np.pi * freq / (hidden_layers + 1))
                            / quantization_interval) * quantization_interval for freq in frequency]
 
+            """
             self.filters = nn.ModuleList([
                     FourierLayer(in_size, hidden_size, input_scale,
                                  quantization_interval=quantization_interval)
                     for i in range(hidden_layers + 1)])
+            """
+            self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval))
         else:
             if len(input_scales) != hidden_layers+1:
                 raise ValueError('require n+1 scales for n hidden_layers')
             input_scale = [[round((np.pi * freq * scale) / quantization_interval) * quantization_interval
                            for freq in frequency] for scale in input_scales]
 
+            """
             self.filters = nn.ModuleList([
                            FourierLayer(in_size, hidden_size, input_scale[i],
                                         quantization_interval=quantization_interval)
                            for i in range(hidden_layers + 1)])
+            """
+            self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval))
+
 
         # linear layers to extract intermediate outputs
-        self.output_linear = nn.ModuleList([nn.Linear(hidden_size, out_size) for i in range(len(self.filters))])
+        # self.output_linear = nn.ModuleList([nn.Linear(hidden_size, out_size) for i in range(len(self.filters))])
+        self.output_linear = nn.ModuleList(generate_layers(start_output_size, increment, out_size, len(self.filters), bias)[1])
         self.output_linear.apply(mfn_weights_init)
 
         # if outputs layers is None, output at every possible layer
@@ -406,7 +459,7 @@ class MultiscaleCoordinateNet(nn.Module):
     def __init__(self, out_features=1, nl='sine', in_features=1,
                  hidden_features=256, num_hidden_layers=3,
                  w0=30, pe_scale=6, use_sigmoid=True, no_pe=False,
-                 integrated_pe=False):
+                 integrated_pe=False, start_output_size=64, increment=32):
 
         super().__init__()
 
@@ -433,8 +486,9 @@ class MultiscaleCoordinateNet(nn.Module):
                            w0=w0).net
 
         if not integrated_pe:
-            self.output_linear = nn.ModuleList([nn.Linear(hidden_features, out_features)
-                                               for i in range(num_hidden_layers)])
+            self.output_linear = nn.ModuleList(generate_layers(start_output_size, increment, out_features, num_hidden_layers)[1])
+            #self.output_linear = nn.ModuleList([nn.Linear(hidden_features, out_features)
+            #                                   for i in range(num_hidden_layers)])
             self.net = self.net[:-1]
 
         print(self)
