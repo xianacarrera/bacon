@@ -153,6 +153,7 @@ def train(model, train_dataloader, steps, lr, steps_til_summary,
                         val_losses = []
                         for (model_input, gt) in val_dataloader:
                             model_output = model(model_input)
+                            print(model_input)
                             val_loss = loss_fn(model_output, gt)
                             val_losses.append(val_loss)
 

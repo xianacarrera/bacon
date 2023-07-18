@@ -216,6 +216,7 @@ def write_psnr(pred_img, gt_img, writer, iter, prefix):
 
         psnrs.append(psnr)
         ssims.append(ssim)
+        writer.add_scalar(prefix + "psnr_" + str(trgt.shape), psnr, iter)
 
     writer.add_scalar(prefix + "psnr", np.mean(psnrs), iter)
     writer.add_scalar(prefix + "ssim", np.mean(ssims), iter)
@@ -302,6 +303,7 @@ def write_multiscale_radiance_summary(models, train_dataloader, val_dataloader, 
     if isinstance(gt_view, list):
         gt_view = make_grid(torch.cat(gt_view, dim=0), scale_each=False, normalize=False)
 
+    scale=None
     if pred_view.shape[1] < 512:
         scale = 512 // pred_view.shape[1]
         pred_view = torch.nn.functional.interpolate(pred_view.unsqueeze(0), scale_factor=scale, mode='nearest')
@@ -399,6 +401,7 @@ def write_multiscale_radiance_summary(models, train_dataloader, val_dataloader, 
         gt_view = gt_view.permute(2, 0, 1)
         val_psnr = peak_signal_noise_ratio(gt_view, pred_views[-1])
 
+    writer.add_scalar(f"val_{str(view_shape)}", val_psnr, global_step=total_steps)
     writer.add_scalar("val: PSNR", val_psnr, global_step=total_steps)
 
     pred_view = make_grid(torch.cat(pred_views, dim=0), scale_each=False, normalize=False)
@@ -492,6 +495,7 @@ def write_radiance_summary(models, train_dataloader, val_dataloader, loss_fn, op
     num_samples = 1
     val_dataloader.dataset.toggle_logging_sampling()
 
+    print(f'Num samples {num_samples}')
     for n in range(num_samples):  # we run a for loop of num_samples instead of a batch to use less cuda mem
         in_dict, meta_dict, gt_dict = next(iter(val_dataloader))
 
@@ -506,6 +510,7 @@ def write_radiance_summary(models, train_dataloader, val_dataloader, loss_fn, op
             out_dict = {key: process_batch_in_chunks(in_dict, model, chunk_size, progress=pbar)
                         for key, model in models.items()}
 
+        print(gt_dict)
         gt_dict_reshaped = gt_dict.copy()
         gt_dict_reshaped['pixel_samples'] = gt_dict_reshaped['pixel_samples'].view(1, -1, 3)
         losses = loss_fn(out_dict, gt_dict_reshaped)
@@ -531,6 +536,7 @@ def write_radiance_summary(models, train_dataloader, val_dataloader, loss_fn, op
         gt_view = gt_view.permute(2, 0, 1)
 
         val_psnr = peak_signal_noise_ratio(gt_view, pred_view)
+        writer.add_scalar(f"val{gt_view.shape}: PSNR", val_psnr, global_step=total_steps)
         writer.add_scalar("val: PSNR", val_psnr, global_step=total_steps)
 
         # nearest neighbor upsample image for easier viewing

@@ -8,7 +8,7 @@ num_steps: 1000000
 steps_til_ckpt: 50000
 steps_til_summary: 1000
 gpu: 0
-chunk_size_train: 2048
+chunk_size_train: 4096
 chunk_size_eval: 256
 num_workers: 0
 lr: 0.001
@@ -18,7 +18,7 @@ hidden_layers: 8
 multiscale: True
 supervise_hr: False
 use_resized: True
-reuse_filters: True
+reuse_filters: False
 img_size: 32
 samples_per_ray: 128
 samples_per_view: 1024
