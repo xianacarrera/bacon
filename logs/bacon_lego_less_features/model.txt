@@ -1,0 +1,52 @@
+combinedMultiscaleBACON(
+  (linear): ModuleList(
+    (0): Linear(in_features=196, out_features=196, bias=True)
+    (1): Linear(in_features=196, out_features=196, bias=True)
+    (2): Linear(in_features=196, out_features=196, bias=True)
+    (3): Linear(in_features=196, out_features=196, bias=True)
+    (4): Linear(in_features=196, out_features=196, bias=True)
+    (5): Linear(in_features=196, out_features=196, bias=True)
+    (6): Linear(in_features=196, out_features=196, bias=True)
+    (7): Linear(in_features=196, out_features=196, bias=True)
+  )
+  (output_linear): ModuleList(
+    (0): Linear(in_features=196, out_features=4, bias=True)
+    (1): Linear(in_features=196, out_features=4, bias=True)
+    (2): Linear(in_features=196, out_features=4, bias=True)
+    (3): Linear(in_features=196, out_features=4, bias=True)
+    (4): Linear(in_features=196, out_features=4, bias=True)
+    (5): Linear(in_features=196, out_features=4, bias=True)
+    (6): Linear(in_features=196, out_features=4, bias=True)
+    (7): Linear(in_features=196, out_features=4, bias=True)
+    (8): Linear(in_features=196, out_features=4, bias=True)
+  )
+  (filters): ModuleList(
+    (0): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (1): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (2): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (3): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (4): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (5): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (6): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (7): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+    (8): FourierLayer(
+      (linear): Linear(in_features=3, out_features=196, bias=True)
+    )
+  )
+)
