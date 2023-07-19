@@ -406,7 +406,7 @@ class NerfBlenderDataset(torch.utils.data.Dataset):
             self.multiscale_imgs = [imgs[i:i+4][::-1] for i in range(0, len(imgs), 4)]
             imgs = imgs[::4]
 
-        return imgs[:3], poses[:3]
+        return imgs, poses
 
     # adapted from https://github.com/krrish94/nerf-pytorch
     # derived from original NeRF repo (MIT License)
