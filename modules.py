@@ -104,7 +104,7 @@ def mfn_weights_init(m):
 
 
 def generate_layers(initial_size, increment, out_size, nlayers, final_size, bias=True):
-    nfeatures = initial_size
+    nfeatures = initial_size + increment
     layers = [nn.Linear(initial_size, nfeatures, bias)]
     output_layers = [nn.Linear(nfeatures, out_size)]
     
@@ -126,7 +126,7 @@ def generate_layers(initial_size, increment, out_size, nlayers, final_size, bias
 class MFNBase(nn.Module):
 
     def __init__(self, hidden_size, out_size, n_layers, weight_scale,
-                 bias=True, output_act=False, start_output_size=128, increment=20, final_size=256):
+                 bias=True, output_act=False, start_output_size=32, increment=28, final_size=256):
         super().__init__()
 
         # hidden_size = #features in the hidden layers
@@ -241,12 +241,8 @@ class BACON(MFNBase):
                              quantization_interval=quantization_interval)
                 for i in range(hidden_layers + 1)])
         """
-        filters = [FourierLayer(in_size, hidden_size, input_scale, quantization_interval=quantization_interval)]
-        for _ in range(hidden_layers-1):
-            filters.append(FourierLayer(in_size, hidden_size+20, input_scale, quantization_interval=quantization_interval))
-            hidden_size += 20
-        filters.append(FourierLayer(in_size, min(hidden_size, 256), input_scale, quantization_interval=quantization_interval))
-        self.filters = nn.ModuleList(filters)
+        self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, 32, input_scale, hidden_layers, quantization_interval, 28, 256))
+
 
     def forward_mfn(self, input_dict):   # Forward pass based on the input data
         if 'coords' in input_dict:
@@ -291,13 +287,12 @@ class BACON(MFNBase):
         return {'model_in': model_input, 'model_out': out}
 
 
-def get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval, increment):
-    filters = [FourierLayer(in_size, start_output_size, input_scale[0], quantization_interval=quantization_interval)]
-    for i in range(1, hidden_layers):     # hidden_layers - 1 iterations
-        filters.append(FourierLayer(in_size, start_output_size, input_scale[i], quantization_interval=quantization_interval))
-        start_output_size += increment
-    filters.append(FourierLayer(in_size, min(start_output_size, 256), input_scale[hidden_layers], 
-                    quantization_interval=quantization_interval))
+def get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval, increment, max_output_size):
+    filters = [FourierLayer(in_size, start_output_size, input_scale[0], quantization_interval=quantization_interval)] 
+    output_size = start_output_size
+    for i in range(1, hidden_layers + 1):    
+        output_size += increment
+        filters.append(FourierLayer(in_size, min(output_size, max_output_size), input_scale[i], quantization_interval=quantization_interval))
     return filters
 
 
@@ -317,9 +312,9 @@ class MultiscaleBACON(MFNBase):
                  input_scales=None,
                  output_layers=None,
                  reuse_filters=False,
-                 start_output_size=128,
-                 increment=20,
-                 final_size=256):
+                 start_output_size=32,
+                 increment=28,
+                 max_output_size=256):
 
         super().__init__(hidden_size, out_size, hidden_layers,
                          weight_scale, bias, output_act)
@@ -343,7 +338,7 @@ class MultiscaleBACON(MFNBase):
                                  quantization_interval=quantization_interval)
                     for i in range(hidden_layers + 1)])
             """
-            self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval, increment))
+            self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval, increment, max_output_size))
         else:
             if len(input_scales) != hidden_layers+1:
                 raise ValueError('require n+1 scales for n hidden_layers')
@@ -356,12 +351,12 @@ class MultiscaleBACON(MFNBase):
                                         quantization_interval=quantization_interval)
                            for i in range(hidden_layers + 1)])
             """
-            self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval, increment))
+            self.filters = nn.ModuleList(get_fourier_increasing_layers(in_size, start_output_size, input_scale, hidden_layers, quantization_interval, increment, max_output_size))
 
 
         # linear layers to extract intermediate outputs
         # self.output_linear = nn.ModuleList([nn.Linear(hidden_size, out_size) for i in range(len(self.filters))])
-        self.output_linear = nn.ModuleList(generate_layers(start_output_size, increment, out_size, len(self.filters), final_size, bias)[1])
+        self.output_linear = nn.ModuleList(generate_layers(start_output_size, increment, out_size, len(self.filters), max_output_size, bias)[1])
         self.output_linear.apply(mfn_weights_init)
 
         # if outputs layers is None, output at every possible layer

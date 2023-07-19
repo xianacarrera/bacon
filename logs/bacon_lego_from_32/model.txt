@@ -1,0 +1,51 @@
+combinedMultiscaleBACON(
+  (linear): ModuleList(
+    (0): Linear(in_features=32, out_features=60, bias=True)
+    (1): Linear(in_features=60, out_features=88, bias=True)
+    (2): Linear(in_features=88, out_features=116, bias=True)
+    (3): Linear(in_features=116, out_features=144, bias=True)
+    (4): Linear(in_features=144, out_features=172, bias=True)
+    (5): Linear(in_features=172, out_features=200, bias=True)
+    (6): Linear(in_features=200, out_features=228, bias=True)
+    (7): Linear(in_features=228, out_features=256, bias=True)
+  )
+  (output_linear): ModuleList(
+    (0): Linear(in_features=60, out_features=4, bias=True)
+    (1): Linear(in_features=88, out_features=4, bias=True)
+    (2): Linear(in_features=116, out_features=4, bias=True)
+    (3): Linear(in_features=144, out_features=4, bias=True)
+    (4): Linear(in_features=172, out_features=4, bias=True)
+    (5): Linear(in_features=200, out_features=4, bias=True)
+    (6): Linear(in_features=228, out_features=4, bias=True)
+    (7): Linear(in_features=256, out_features=4, bias=True)
+  )
+  (filters): ModuleList(
+    (0): FourierLayer(
+      (linear): Linear(in_features=3, out_features=32, bias=True)
+    )
+    (1): FourierLayer(
+      (linear): Linear(in_features=3, out_features=60, bias=True)
+    )
+    (2): FourierLayer(
+      (linear): Linear(in_features=3, out_features=88, bias=True)
+    )
+    (3): FourierLayer(
+      (linear): Linear(in_features=3, out_features=116, bias=True)
+    )
+    (4): FourierLayer(
+      (linear): Linear(in_features=3, out_features=144, bias=True)
+    )
+    (5): FourierLayer(
+      (linear): Linear(in_features=3, out_features=172, bias=True)
+    )
+    (6): FourierLayer(
+      (linear): Linear(in_features=3, out_features=200, bias=True)
+    )
+    (7): FourierLayer(
+      (linear): Linear(in_features=3, out_features=228, bias=True)
+    )
+    (8): FourierLayer(
+      (linear): Linear(in_features=3, out_features=256, bias=True)
+    )
+  )
+)
